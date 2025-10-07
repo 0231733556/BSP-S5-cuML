@@ -30,6 +30,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
+from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 
 @dataclass
@@ -105,22 +107,81 @@ class ClassifierWrapper:
         return self._to_array(X), self._to_array(y)
 
 
-def _example_smoke_test() -> None:
-    """Quick smoke test using Iris dataset to validate the wrapper."""
-    from sklearn.datasets import load_iris
+@dataclass
+class ClusteringWrapper:
+    """A wrapper around clustering algorithms with an optional scaler.
 
-    data = load_iris()
-    X = data['data']
-    y = data['target']
+    Fields:
+        algorithm_name: one of 'kmeans', 'agglomerative', 'dbscan' (default 'kmeans')
+        n_clusters: number of clusters (ignored by DBSCAN)
+        use_scaler: whether to add StandardScaler in the pipeline
+        random_state: optional random seed for reproducibility
+        algorithm_params: dict of extra estimator params
+    """
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+    algorithm_name: str = "kmeans"
+    n_clusters: int = 3
+    use_scaler: bool = True
+    random_state: Optional[int] = 42
+    algorithm_params: Optional[dict] = None
 
-    clf = ClassifierWrapper(estimator_name='random_forest')
-    clf.fit(X_train, y_train)
-    preds = clf.predict(X_test)
-    acc = accuracy_score(y_test, preds)
-    print(f"Smoke test accuracy: {acc:.4f}")
+    def __post_init__(self):
+        self.algorithm_params = self.algorithm_params or {}
+        self.estimator = self._make_estimator(self.algorithm_name)
+        steps = []
+        if self.use_scaler:
+            steps.append(("scaler", StandardScaler()))
+        steps.append(("estimator", self.estimator))
+        self.pipeline: Pipeline = Pipeline(steps)
+
+    def _make_estimator(self, name: str):
+        name = name.lower()
+        if name in ("kmeans", "k-means", "km"):
+            return KMeans(n_clusters=self.n_clusters, random_state=self.random_state, **self.algorithm_params)
+        if name in ("agglomerative", "agglomerative_clustering", "agg"):
+            return AgglomerativeClustering(n_clusters=self.n_clusters, **self.algorithm_params)
+        if name in ("dbscan",):
+            return DBSCAN(**self.algorithm_params)
+        raise ValueError(f"unknown algorithm_name: {name}")
+
+    def fit(self, X: Any) -> "ClusteringWrapper":
+        X_arr = self._to_array(X)
+        # Most clustering estimators implement fit; for ones that only
+        # implement fit_predict (e.g., DBSCAN) we call fit on the estimator.
+        try:
+            self.pipeline.fit(X_arr)
+        except Exception:
+            # Fallback: fit estimator directly
+            self.pipeline.named_steps["estimator"].fit(X_arr)
+        return self
+
+    def predict(self, X: Any) -> np.ndarray:
+        X_arr = self._to_array(X)
+        # If estimator supports predict (KMeans), use pipeline.predict
+        if hasattr(self.pipeline, "predict"):
+            return self.pipeline.predict(X_arr)
+        # Otherwise, if estimator supports fit_predict, use it (will refit)
+        est = self.pipeline.named_steps["estimator"]
+        if hasattr(est, "fit_predict"):
+            return est.fit_predict(X_arr)
+        raise AttributeError("Underlying estimator does not support predict or fit_predict")
+
+    def save(self, path: str) -> None:
+        with open(path, "wb") as f:
+            pickle.dump(self.pipeline, f)
+
+    def load(self, path: str) -> None:
+        with open(path, "rb") as f:
+            self.pipeline = pickle.load(f)
+
+    def _to_array(self, X: Any) -> np.ndarray:
+        if isinstance(X, pd.DataFrame) or isinstance(X, pd.Series):
+            return X.values
+        if isinstance(X, np.ndarray):
+            return X
+        return np.array(X)
+
+    def _to_arrays(self, X: Any, y: Any):
+        return self._to_array(X), self._to_array(y)
 
 
-if __name__ == '__main__':
-    _example_smoke_test()
