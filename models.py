@@ -44,9 +44,10 @@ class ClassifierWrapper:
         random_state: optional random seed for reproducibility
     """
 
-    estimator_name: str = 'random_forest'
-    use_scaler: bool = True
-    random_state: Optional[int] = 42
+    def __init__(self, estimator_name: str = 'random_forest', use_scaler: bool = True, random_state: Optional[int] = 42):
+        self.estimator_name = estimator_name
+        self.use_scaler = use_scaler
+        self.random_state = random_state
 
     def __post_init__(self):
         self.estimator = self._make_estimator(self.estimator_name)
