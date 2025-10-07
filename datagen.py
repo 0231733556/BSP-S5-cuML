@@ -47,7 +47,7 @@ def generate_classification_data(
 
     return X, y
 
-def generate_cluster_data(
+def generate_clustering_data(
     n_samples=100_000,
     n_features=50,
     centers=10,

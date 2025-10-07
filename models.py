@@ -23,6 +23,8 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+import time
+import statistics
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
@@ -107,7 +109,6 @@ class ClassifierWrapper:
     def _to_arrays(self, X: Any, y: Any):
         return self._to_array(X), self._to_array(y)
 
-
 @dataclass
 class ClusteringWrapper:
     """A wrapper around clustering algorithms with an optional scaler.
@@ -120,11 +121,12 @@ class ClusteringWrapper:
         algorithm_params: dict of extra estimator params
     """
 
-    algorithm_name: str = "kmeans"
-    n_clusters: int = 3
-    use_scaler: bool = True
-    random_state: Optional[int] = 42
-    algorithm_params: Optional[dict] = None
+    def __init__(self, algorithm_name: str = "kmeans", n_clusters: int = 3, use_scaler: bool = True, random_state: Optional[int] = 42, algorithm_params: Optional[dict] = None):
+        self.algorithm_name = algorithm_name
+        self.n_clusters = n_clusters
+        self.use_scaler = use_scaler
+        self.random_state = random_state
+        self.algorithm_params = algorithm_params
 
     def __post_init__(self):
         self.algorithm_params = self.algorithm_params or {}
@@ -185,4 +187,93 @@ class ClusteringWrapper:
     def _to_arrays(self, X: Any, y: Any):
         return self._to_array(X), self._to_array(y)
 
+def train_model(
+    model,
+    X,
+    y=None,
+    *,
+    X_val=None,
+    y_val=None,
+    trials: int = 1,
+    warmups: int = 0,
+    metric=None,
+    random_state: Optional[int] = None,
+):
+    """Generic training helper.
+
+    Fits `model` on (X, y) and returns timing statistics. Optionally evaluates
+    on validation data using `metric` (callable taking (y_true, y_pred)).
+
+    Parameters
+    - model: object with a .fit(X, y) method. May be a pipeline or wrapper.
+    - X, y: training data. For unsupervised models y can be None.
+    - X_val, y_val: optional validation data for scoring after fit.
+    - trials: number of timed trials to run (re-fit each trial).
+    - warmups: number of warmup runs before timing.
+    - metric: optional callable(y_true, y_pred) to compute a validation score.
+    - random_state: optional seed to set on the model if it has that attribute.
+
+    Returns a dict with keys: 'times' (list), 'median', 'mean', 'std', and
+    optionally 'val_score_median' and 'val_scores'.
+    """
+
+    def _set_seed(m, seed):
+        if seed is None:
+            return
+        # Prefer attribute on estimator, fall back to setting on named step
+        try:
+            if hasattr(m, "random_state"):
+                setattr(m, "random_state", seed)
+        except Exception:
+            pass
+
+    # Warmups
+    for _ in range(warmups):
+        _set_seed(model, random_state)
+        if y is None:
+            model.fit(X)
+        else:
+            model.fit(X, y)
+
+    times = []
+    val_scores = []
+    for _ in range(trials):
+        _set_seed(model, random_state)
+        t0 = time.perf_counter()
+        if y is None:
+            model.fit(X)
+        else:
+            model.fit(X, y)
+        t1 = time.perf_counter()
+        times.append(t1 - t0)
+
+        if X_val is not None and y_val is not None and metric is not None:
+            preds = None
+            try:
+                preds = model.predict(X_val)
+            except Exception:
+                est = getattr(model, "estimator", model)
+                if hasattr(est, "fit_predict"):
+                    try:
+                        preds = est.fit_predict(X_val)
+                    except Exception:
+                        preds = None
+            if preds is not None:
+                try:
+                    val_scores.append(metric(y_val, preds))
+                except Exception:
+                    val_scores.append(None)
+
+    result = {
+        "times": times,
+        "median": statistics.median(times),
+        "mean": statistics.mean(times),
+        "std": statistics.pstdev(times) if len(times) > 1 else 0.0,
+    }
+    if val_scores:
+        filtered = [s for s in val_scores if s is not None]
+        if filtered:
+            result["val_score_median"] = statistics.median(filtered)
+            result["val_scores"] = val_scores
+    return result
 
