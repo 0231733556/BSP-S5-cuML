@@ -4,3 +4,4 @@ pandas
 scipy
 cuml
 cudf
+copy

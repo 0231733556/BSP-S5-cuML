@@ -34,6 +34,45 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from sklearn.metrics import adjusted_rand_score, silhouette_score
+import copy
+
+
+# Module-level defaults that can be changed by calling `set_defaults`
+DEFAULTS = {
+    "classifier": {
+        "estimator_name": "random_forest",
+        "use_scaler": True,
+        "random_state": 42,
+        "n_estimators": 100,
+        "max_iter": 1000,
+        "probability": True,
+    },
+    "clustering": {
+        "algorithm_name": "kmeans",
+        "n_clusters": 3,
+        "use_scaler": True,
+        "random_state": 42,
+        "algorithm_params": None,
+    },
+}
+
+
+def set_defaults(classifier: dict | None = None, clustering: dict | None = None) -> None:
+    """Update module-level defaults.
+
+    Examples:
+        set_defaults(classifier={'n_estimators': 200})
+        set_defaults(clustering={'n_clusters': 10})
+    """
+    if classifier:
+        DEFAULTS["classifier"].update(classifier)
+    if clustering:
+        DEFAULTS["clustering"].update(clustering)
+
+
+def get_defaults() -> dict:
+    """Return a deep copy of the current defaults."""
+    return copy.deepcopy(DEFAULTS)
 
 
 @dataclass
@@ -46,12 +85,29 @@ class ClassifierWrapper:
         random_state: optional random seed for reproducibility
     """
 
-    def __init__(self, estimator_name: str = 'random_forest', use_scaler: bool = True, random_state: Optional[int] = 42):
-        self.estimator_name = estimator_name
-        self.use_scaler = use_scaler
-        self.random_state = random_state
+    estimator_name: None | str = None
+    use_scaler: bool = True
+    random_state: Optional[int] = 42
+    n_estimators: int = 100
+    max_iter: int = 1000
+    probability: bool = True
 
     def __post_init__(self):
+        # Fill missing/None fields from module DEFAULTS
+        d = DEFAULTS["classifier"]
+        if self.estimator_name is None:
+            self.estimator_name = d["estimator_name"]
+        if self.use_scaler is None:
+            self.use_scaler = d["use_scaler"]
+        if self.random_state is None:
+            self.random_state = d["random_state"]
+        if getattr(self, "n_estimators", None) is None:
+            self.n_estimators = d["n_estimators"]
+        if getattr(self, "max_iter", None) is None:
+            self.max_iter = d["max_iter"]
+        if getattr(self, "probability", None) is None:
+            self.probability = d["probability"]
+
         self.estimator = self._make_estimator(self.estimator_name)
         steps = []
         if self.use_scaler:
@@ -61,12 +117,12 @@ class ClassifierWrapper:
 
     def _make_estimator(self, name: str):
         name = name.lower()
-        if name in ('random_forest', 'rf'):
-            return RandomForestClassifier(n_estimators=100, random_state=self.random_state)
+        if name in ('random_forest', 'rf','randomforestclassifier','RandomForestClassifier'):
+            return RandomForestClassifier(n_estimators=self.n_estimators, random_state=self.random_state)
         if name in ('logistic', 'logistic_regression', 'lr'):
-            return LogisticRegression(max_iter=1000, random_state=self.random_state)
+            return LogisticRegression(max_iter=self.max_iter, random_state=self.random_state)
         if name in ('svc', 'svm'):
-            return SVC(probability=True, random_state=self.random_state)
+            return SVC(probability=self.probability, random_state=self.random_state)
         raise ValueError(f"unknown estimator_name: {name}")
 
     def fit(self, X: Any, y: Any) -> 'ClassifierWrapper':
@@ -121,15 +177,26 @@ class ClusteringWrapper:
         algorithm_params: dict of extra estimator params
     """
 
-    def __init__(self, algorithm_name: str = "kmeans", n_clusters: int = 3, use_scaler: bool = True, random_state: Optional[int] = 42, algorithm_params: Optional[dict] = None):
-        self.algorithm_name = algorithm_name
-        self.n_clusters = n_clusters
-        self.use_scaler = use_scaler
-        self.random_state = random_state
-        self.algorithm_params = algorithm_params
+    algorithm_name: str = "kmeans"
+    n_clusters: int = 3
+    use_scaler: bool = True
+    random_state: Optional[int] = 42
+    algorithm_params: Optional[dict] = None
 
     def __post_init__(self):
-        self.algorithm_params = self.algorithm_params or {}
+        # Fill missing/None fields from module DEFAULTS
+        d = DEFAULTS["clustering"]
+        if self.algorithm_name is None:
+            self.algorithm_name = d["algorithm_name"]
+        if self.n_clusters is None:
+            self.n_clusters = d["n_clusters"]
+        if self.use_scaler is None:
+            self.use_scaler = d["use_scaler"]
+        if self.random_state is None:
+            self.random_state = d["random_state"]
+        if self.algorithm_params is None:
+            self.algorithm_params = d["algorithm_params"] or {}
+
         self.estimator = self._make_estimator(self.algorithm_name)
         steps = []
         if self.use_scaler:
