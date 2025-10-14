@@ -16,11 +16,11 @@ scikit-learn.
 """
 
 from __future__ import annotations
-
+import logging
 import pickle
 from dataclasses import dataclass
 from typing import Any, Optional
-import logging
+
 import numpy as np
 import pandas as pd
 import time
@@ -35,12 +35,27 @@ from sklearn.metrics import accuracy_score
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 import copy
+
 LOG = logging.getLogger(__name__)
 
-def set_log_level(level):
-    logging.basicConfig(level=level)
+def set_log_level(level: int) -> None:
+    """Set the logging level for this module."""
     LOG.setLevel(level)
-    
+
+def use_accel(val: bool):
+    if val:
+        try:
+            from IPython import get_ipython
+            ipython = get_ipython()
+            if ipython is not None:
+                LOG.debug("Loading cuML accel extension")
+                ipython.run_line_magic("load_ext", "cuml.accel")
+                
+        except Exception:
+            pass 
+    else:
+        LOG.debug("Skipping cuML accel extension load failure")
+
 # Module-level defaults that can be changed by calling `set_defaults`
 DEFAULTS = {
     "classifier": {
@@ -269,6 +284,7 @@ def train_model(
     warmups: int = 0,
     metric=None,
     random_state: Optional[int] = None,
+    timing: bool = False,
 ):
     """Generic training helper.
 
@@ -298,26 +314,34 @@ def train_model(
         except Exception:
             pass
 
-    # Warmups
-    for _ in range(warmups):
-        _set_seed(model, random_state)
-        if y is None:
-            model.fit(X)
-        else:
-            model.fit(X, y)
-
     times = []
     val_scores = []
+    warmup_total = 0.0
+    # If timing is enabled, always run at least one warmup
+    if timing:
+        warmups = max(warmups, 1)
+        t0 = time.perf_counter()
+        for _ in range(warmups):
+            _set_seed(model, random_state)
+            if y is None:
+                model.fit(X)
+            else:
+                model.fit(X, y)
+            t1 = time.perf_counter()
+            warmup_total += (t1 - t0)
+            t0 = t1
+        LOG.debug(f"Warmup time over {warmups} runs: {warmup_total:.4f} sec")
     for _ in range(trials):
         _set_seed(model, random_state)
-        t0 = time.perf_counter()
+        if timing:
+            t1 = time.perf_counter()
         if y is None:
             model.fit(X)
         else:
             model.fit(X, y)
-        t1 = time.perf_counter()
-        times.append(t1 - t0)
-
+        if timing:
+            t2 = time.perf_counter()
+            times.append(t2 - t1)
         if X_val is not None and y_val is not None and metric is not None:
             preds = None
             try:
@@ -337,8 +361,8 @@ def train_model(
 
     result = {
         "times": times,
-        "median": statistics.median(times),
-        "mean": statistics.mean(times),
+        "median": statistics.median(times) if times else None,
+        "mean": statistics.mean(times) if times else None,
         "std": statistics.pstdev(times) if len(times) > 1 else 0.0,
     }
     if val_scores:
@@ -348,16 +372,3 @@ def train_model(
             result["val_scores"] = val_scores
     return result
 
-def use_accel(val: bool):
-    if val:
-        try:
-            from IPython import get_ipython
-            ipython = get_ipython()
-            if ipython is not None:
-                LOG.debug("Loading cuML accel extension")
-                ipython.run_line_magic("load_ext", "cuml.accel")
-                
-        except Exception:
-            pass 
-    else:
-        LOG.debug("Skipping cuML accel extension load failure")
