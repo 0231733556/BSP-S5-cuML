@@ -20,7 +20,7 @@ from __future__ import annotations
 import pickle
 from dataclasses import dataclass
 from typing import Any, Optional
-
+import logging
 import numpy as np
 import pandas as pd
 import time
@@ -35,8 +35,12 @@ from sklearn.metrics import accuracy_score
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 import copy
+LOG = logging.getLogger(__name__)
 
-
+def set_log_level(level):
+    logging.basicConfig(level=level)
+    LOG.setLevel(level)
+    
 # Module-level defaults that can be changed by calling `set_defaults`
 DEFAULTS = {
     "classifier": {
@@ -344,3 +348,16 @@ def train_model(
             result["val_scores"] = val_scores
     return result
 
+def use_accel(val: bool):
+    if val:
+        try:
+            from IPython import get_ipython
+            ipython = get_ipython()
+            if ipython is not None:
+                LOG.debug("Loading cuML accel extension")
+                ipython.run_line_magic("load_ext", "cuml.accel")
+                
+        except Exception:
+            pass 
+    else:
+        LOG.debug("Skipping cuML accel extension load failure")
