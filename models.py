@@ -34,6 +34,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
 from sklearn.metrics import adjusted_rand_score, silhouette_score
+from dataclasses import dataclass, field
+
 import copy
 
 LOG = logging.getLogger(__name__)
@@ -45,13 +47,14 @@ def set_log_level(level: int) -> None:
 def use_accel(val: bool):
     if val:
         try:
-            from IPython import get_ipython
+            from IPython.core.getipython import get_ipython
             ipython = get_ipython()
             if ipython is not None:
                 LOG.debug("Loading cuML accel extension")
                 ipython.run_line_magic("load_ext", "cuml.accel")
                 
         except Exception:
+            LOG.debug("cuML accel extension load failed, continuing without acceleration")
             pass 
     else:
         LOG.debug("Skipping cuML accel extension load failure")
@@ -103,47 +106,60 @@ class ClassifierWrapper:
         use_scaler: whether to add StandardScaler in the pipeline
         random_state: optional random seed for reproducibility
     """
-
-    estimator_name: None | str = None
+ 
+    estimator_name: str = "random_forest"
     use_scaler: bool = True
-    random_state: Optional[int] = 42
-    n_estimators: int = 100
-    max_iter: int = 1000
-    probability: bool = True
+    random_state: int | None = 42
+    estimator_params: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        # Fill missing/None fields from module DEFAULTS
-        d = DEFAULTS["classifier"]
-        if self.estimator_name is None:
-            self.estimator_name = d["estimator_name"]
-        if self.use_scaler is None:
-            self.use_scaler = d["use_scaler"]
-        if self.random_state is None:
-            self.random_state = d["random_state"]
-        if getattr(self, "n_estimators", None) is None:
-            self.n_estimators = d["n_estimators"]
-        if getattr(self, "max_iter", None) is None:
-            self.max_iter = d["max_iter"]
-        if getattr(self, "probability", None) is None:
-            self.probability = d["probability"]
+        # Pull classifier defaults and merge them safely
+        d = copy.deepcopy(DEFAULTS["classifier"])
 
+        # Merge estimator-specific parameters (no shared state)
+        merged_params = {**d, **self.__dict__}
+        self.estimator_name = merged_params["estimator_name"]
+        self.use_scaler = merged_params["use_scaler"]
+        self.random_state = merged_params["random_state"]
+
+        # Optional estimator-specific arguments
+        self.n_estimators = merged_params.get("n_estimators", 100)
+        self.max_iter = merged_params.get("max_iter", 1000)
+        self.probability = merged_params.get("probability", True)
+        self.estimator_params = merged_params.get("estimator_params", {}) | self.estimator_params
+
+        # Build estimator
         self.estimator = self._make_estimator(self.estimator_name)
+
         steps = []
         if self.use_scaler:
-            steps.append(('scaler', StandardScaler()))
-        steps.append(('estimator', self.estimator))
-        self.pipeline: Pipeline = Pipeline(steps)
+            steps.append(("scaler", StandardScaler()))
+        steps.append(("estimator", self.estimator))
+        self.pipeline = Pipeline(steps)
 
     def _make_estimator(self, name: str):
         name = name.lower()
-        if name in ('random_forest', 'rf','randomforestclassifier','RandomForestClassifier'):
-            return RandomForestClassifier(n_estimators=self.n_estimators, random_state=self.random_state)
-        if name in ('logistic', 'logistic_regression', 'lr'):
-            return LogisticRegression(max_iter=self.max_iter, random_state=self.random_state)
-        if name in ('svc', 'svm'):
-            return SVC(probability=self.probability, random_state=self.random_state)
+        if name in ("random_forest", "rf", "randomforestclassifier"):
+            return RandomForestClassifier(
+                n_estimators=self.n_estimators,
+                random_state=self.random_state,
+                **self.estimator_params,
+            )
+        if name in ("logistic", "logistic_regression", "lr"):
+            return LogisticRegression(
+                max_iter=self.max_iter,
+                random_state=self.random_state,
+                **self.estimator_params,
+            )
+        if name in ("svc", "svm"):
+            return SVC(
+                probability=self.probability,
+                random_state=self.random_state,
+                **self.estimator_params,
+            )
         raise ValueError(f"unknown estimator_name: {name}")
-
+    
+    
     def fit(self, X: Any, y: Any) -> 'ClassifierWrapper':
         """Fit the internal pipeline.
 
@@ -155,8 +171,12 @@ class ClassifierWrapper:
 
     def predict(self, X: Any) -> np.ndarray:
         X_arr = self._to_array(X)
-        return self.pipeline.predict(X_arr)
-
+        result = self.pipeline.predict(X_arr)
+        # Handle both single array and tuple returns
+        if isinstance(result, tuple):
+            return result[0]  # Return first array if tuple
+        return result
+    
     def predict_proba(self, X: Any) -> np.ndarray:
         X_arr = self._to_array(X)
         # Some estimators may not support predict_proba; raise if missing
@@ -176,7 +196,7 @@ class ClassifierWrapper:
 
     def _to_array(self, X: Any) -> np.ndarray:
         if isinstance(X, pd.DataFrame) or isinstance(X, pd.Series):
-            return X.values
+            return X.to_numpy()
         if isinstance(X, np.ndarray):
             return X
         return np.array(X)
@@ -200,28 +220,20 @@ class ClusteringWrapper:
     n_clusters: int = 3
     use_scaler: bool = True
     random_state: Optional[int] = 42
-    algorithm_params: Optional[dict] = None
+    algorithm_params: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        # Fill missing/None fields from module DEFAULTS
-        d = DEFAULTS["clustering"]
-        if self.algorithm_name is None:
-            self.algorithm_name = d["algorithm_name"]
-        if self.n_clusters is None:
-            self.n_clusters = d["n_clusters"]
-        if self.use_scaler is None:
-            self.use_scaler = d["use_scaler"]
-        if self.random_state is None:
-            self.random_state = d["random_state"]
-        if self.algorithm_params is None:
-            self.algorithm_params = d["algorithm_params"] or {}
+        defaults = DEFAULTS["clustering"].get("algorithm_params") or {}
+        # Merge user params with defaults
+        merged = {**defaults, **self.algorithm_params}
+        self.algorithm_params = merged
 
         self.estimator = self._make_estimator(self.algorithm_name)
         steps = []
         if self.use_scaler:
             steps.append(("scaler", StandardScaler()))
         steps.append(("estimator", self.estimator))
-        self.pipeline: Pipeline = Pipeline(steps)
+        self.pipeline = Pipeline(steps)
 
     def _make_estimator(self, name: str):
         name = name.lower()
@@ -246,13 +258,17 @@ class ClusteringWrapper:
 
     def predict(self, X: Any) -> np.ndarray:
         X_arr = self._to_array(X)
-        # If estimator supports predict (KMeans), use pipeline.predict
-        if hasattr(self.pipeline, "predict"):
-            return self.pipeline.predict(X_arr)
-        # Otherwise, if estimator supports fit_predict, use it (will refit)
         est = self.pipeline.named_steps["estimator"]
+        # If estimator supports predict (KMeans), use pipeline.predict
+        if hasattr(est, "predict"):
+            result = self.pipeline.predict(X_arr)
+            if isinstance(result, tuple):
+                result = result[0]
+            return np.asarray(result)
+        # Otherwise, if estimator supports fit_predict, use it (will refit)
         if hasattr(est, "fit_predict"):
-            return est.fit_predict(X_arr)
+            result = est.fit_predict(X_arr)
+            return np.asarray(result)
         raise AttributeError("Underlying estimator does not support predict or fit_predict")
 
     def save(self, path: str) -> None:
@@ -265,7 +281,7 @@ class ClusteringWrapper:
 
     def _to_array(self, X: Any) -> np.ndarray:
         if isinstance(X, pd.DataFrame) or isinstance(X, pd.Series):
-            return X.values
+            return X.to_numpy()
         if isinstance(X, np.ndarray):
             return X
         return np.array(X)

@@ -81,5 +81,6 @@ def generate_clustering_data(
         centers=centers,
         cluster_std=cluster_std,
         random_state=random_state,
+        return_centers=False,
     )
     return X, y
