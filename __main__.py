@@ -57,8 +57,8 @@ def run_project(n_samples=100_000, n_features=20, n_informative=15, n_classes=2,
     resultClustering=train_model(kmc,X=clusteringXY[0],timing=True,trials=5)
     row_classifier=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="GPU1", results=resultClassifier)
     row_clustering=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="GPU1", results=resultClustering)
-    write_results_to_parquet(row_classifier, "classifier_results.parquet")
-    write_results_to_parquet(row_clustering, "clustering_results.parquet")
+    write_results_to_parquet(row_classifier, os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"classifier_results.parquet")
+    write_results_to_parquet(row_clustering, os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"clustering_results.parquet")
     print("Classifier results:", resultClassifier)
     print("Clustering results:", resultClustering)
     
