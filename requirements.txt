@@ -1,7 +1,13 @@
 scikit-learn>=1.0
-numpy
-pandas
-scipy
-cuml
-cudf
-copy
+numpy>=1.21
+pandas>=1.3
+scipy>=1.7
+
+# Note: cuml and cudf are RAPIDS packages and are NOT available on PyPI.
+# Install them via conda or the RAPIDS wheel that matches your CUDA/Python:
+# Example (conda):
+#   conda install -c rapidsai -c nvidia -c conda-forge cuml cudf python=3.8 cudatoolkit=11.2
+#
+# If you still want entries here as placeholders, uncomment:
+# cuml
+# cudf
