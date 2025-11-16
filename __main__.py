@@ -5,7 +5,8 @@ import logging as LOG
 import pandas as pd
 import os
 SEED = 42
-
+CLASSIFIER= "random_forest"
+CLUSTER= "kmeans"
 
 
 def write_results_to_parquet(results: dict, filename: str) -> None:
@@ -15,7 +16,7 @@ def write_results_to_parquet(results: dict, filename: str) -> None:
         df = pd.concat([df_existing, df], ignore_index=True)
     df.to_parquet(filename, index=False)
 
-def record_trial(n_samples:int, n_features:int, sparsity:float, accelerator:str, results:dict) -> dict:
+def record_trial(n_samples:int, n_features:int, sparsity:float, accelerator:str, algorithm:str, results:dict) -> dict:
     row = {
         "n_samples": n_samples,
         "n_features": n_features,
@@ -23,6 +24,7 @@ def record_trial(n_samples:int, n_features:int, sparsity:float, accelerator:str,
         "accelerator": accelerator,
         "median_time" : results.get("median", None),
         "mean_time" : results.get("mean", None),
+        "algorithm" : algorithm,
     }
     return row
 
@@ -34,7 +36,7 @@ def run_project(n_samples=100_000, n_features=20, n_informative=15, n_classes=2,
 
     setting={
         "classifier": {
-            "estimator_name": "random_forest",
+            "estimator_name": CLASSIFIER,
             "use_scaler": True,
             "random_state": SEED,
             "n_estimators": 100,
@@ -42,7 +44,7 @@ def run_project(n_samples=100_000, n_features=20, n_informative=15, n_classes=2,
             "probability": True,
         },
         "clustering": {
-            "algorithm_name": "kmeans",
+            "algorithm_name": CLUSTER,
             "n_clusters": 3,
             "use_scaler": True,
             "random_state": SEED,
@@ -55,22 +57,24 @@ def run_project(n_samples=100_000, n_features=20, n_informative=15, n_classes=2,
     kmc = ClusteringWrapper()
     resultClassifier=train_model(model=rfc,X=classifierSplit[0],y=classifierSplit[2],X_val=classifierSplit[1],y_val=classifierSplit[3],timing=True,trials=5)
     resultClustering=train_model(kmc,X=clusteringXY[0],timing=True,trials=5)
-    row_classifier=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="GPU1", results=resultClassifier)
-    row_clustering=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="GPU1", results=resultClustering)
-    write_results_to_parquet(row_classifier, os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"classifier_results.parquet")
-    write_results_to_parquet(row_clustering, os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"clustering_results.parquet")
+    row_classifier=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="CPU", results=resultClassifier, algorithm=CLASSIFIER)
+    row_clustering=record_trial(n_samples=n_samples, n_features=n_features, sparsity=sparsity, accelerator="CPU", results=resultClustering, algorithm=CLUSTER)
+    write_results_to_parquet(row_classifier, "." + os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"classifier_results.parquet")
+    write_results_to_parquet(row_clustering, "." + os.sep + "BSP_S5_cuML" + os.sep + "data" +os.sep+"clustering_results.parquet")
     print("Classifier results:", resultClassifier)
     print("Clustering results:", resultClustering)
     
     
     
 def main () :
-    number_samples = [1_000_000,10_000_000]
+    number_samples = [1_000,10_000]
+    n_features = [64,128,256,512,1024]
     sparsities = [0.0,0.25,0.5,0.75,0.9]
     
     for n_samples in number_samples:
-        for sparsity in sparsities:
-            run_project(n_samples=n_samples, n_features=20, n_informative=15, n_classes=2,sparsity=sparsity,centers=10,cluster_std=1.0,test_size=0.2, random_state=42)
+        for n_feature in n_features:
+            for sparsity in sparsities:
+                run_project(n_samples=n_samples, n_features=n_feature, n_informative=15, n_classes=2,sparsity=sparsity,centers=10,cluster_std=1.0,test_size=0.2, random_state=42)
 
 
 

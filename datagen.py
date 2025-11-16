@@ -1,6 +1,8 @@
 from sklearn.datasets import make_classification, make_blobs
 from scipy.sparse import random as sparse_random
 import numpy as np
+import pandas as pd
+import os
 
 def generate_classification_data(
     n_samples=100_000,
@@ -84,3 +86,32 @@ def generate_clustering_data(
         return_centers=False,
     )
     return X, y
+
+def loadFromParquet(file_path: str = f".{os.sep}data{os.sep}",files : tuple[str,str]=("classifier_results.parquet","clustering_results.parquet")) -> tuple[pd.DataFrame, pd.DataFrame]:
+    
+    """
+    Load results from parquet files.
+
+    Parameters
+    ----------
+    file_path : str
+        Directory path where parquet files are stored.
+    files : tuple of str
+        Filenames of the parquet files to load.
+
+    Returns
+    -------
+    dataframes : tuple of pd.DataFrame
+        Loaded dataframes for each file.
+    """
+    dataframes = []
+    for file in files:
+        full_path = os.path.join(file_path, file)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"File not found: {full_path}")
+        df = pd.read_parquet(full_path)
+        dataframes.append(df)
+        
+    df_classifier,df_clustering = dataframes
+     
+    return df_classifier.reset_index(drop=True), df_clustering.reset_index(drop=True)
